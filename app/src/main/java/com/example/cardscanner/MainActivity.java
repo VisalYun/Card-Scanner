@@ -1,187 +1,153 @@
 package com.example.cardscanner;
 
-import androidx.annotation.RequiresApi;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.camera.core.AspectRatio;
-import androidx.camera.core.Camera;
-import androidx.camera.core.CameraSelector;
-import androidx.camera.core.ImageAnalysis;
-import androidx.camera.core.ImageCapture;
-import androidx.camera.core.ImageCaptureException;
-import androidx.camera.core.ImageProxy;
-import androidx.camera.core.Preview;
-import androidx.camera.core.UseCaseGroup;
-import androidx.camera.core.ViewPort;
-import androidx.camera.lifecycle.ProcessCameraProvider;
-import androidx.camera.view.PreviewView;
-import androidx.cardview.widget.CardView;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-import androidx.lifecycle.LifecycleOwner;
-
-import android.graphics.ColorMatrix;
-import android.graphics.ColorMatrixColorFilter;
-import android.graphics.Paint;
-import android.os.Build;
-import android.util.Rational;
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.content.ContentValues;
-import android.content.Context;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
-import android.graphics.Point;
 import android.media.Image;
 import android.os.Bundle;
-import android.os.Debug;
-import android.os.Environment;
-import android.os.Handler;
-import android.os.Looper;
-import android.provider.MediaStore;
 import android.util.Log;
 import android.util.Size;
-import android.view.Display;
-import android.view.Surface;
-import android.view.View;
-import android.view.WindowManager;
-import android.widget.Button;
-import android.widget.FrameLayout;
-import android.widget.ImageView;
-import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ImageProxy;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.view.PreviewView;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.databinding.DataBindingUtil;
+
+import com.example.cardscanner.databinding.ActivityMainBinding;
+import com.example.cardscanner.utils.Draw;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mlkit.common.model.LocalModel;
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.objects.DetectedObject;
+import com.google.mlkit.vision.objects.ObjectDetection;
+import com.google.mlkit.vision.objects.ObjectDetector;
+import com.google.mlkit.vision.objects.custom.CustomObjectDetectorOptions;
 
-import java.io.File;
-import java.nio.ByteBuffer;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity {
-    private Executor executor = Executors.newSingleThreadExecutor();
-    private final String[] REQUIRED_PERMISSIONS = new String[]{"android.permission.CAMERA", "android.permission.WRITE_EXTERNAL_STORAGE"};
-    private int REQUEST_CODE_PERMISSIONS = 1001;
+    private static final String[] CAMERA_PERMISSION = new String[]{Manifest.permission.CAMERA};
+    private static final int CAMERA_REQUEST_CODE = 10;
 
+    PreviewView previewView;
+    private ActivityMainBinding binding;
+    private ObjectDetector objectDetector;
     private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
-    private PreviewView previewView;
-    private Button captureButton;
-    private ImageView imgViewer;
-    private CardView cardView;
 
-    @RequiresApi(api = Build.VERSION_CODES.R)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        if (hasAllPermission()) {
-            previewView = (PreviewView) findViewById(R.id.viewFinder);
-            captureButton = (Button) findViewById(R.id.captureBtn);
-            imgViewer = (ImageView) findViewById(R.id.imgViewer);
-            cardView = (CardView) findViewById(R.id.cardView);
+        binding = DataBindingUtil.setContentView(this, R.layout.activity_main);
+        previewView = findViewById(R.id.previewView);
 
-            captureButton.setOnClickListener(v -> {
-                captureButton.setVisibility(View.INVISIBLE);
-                cardView.setVisibility(View.INVISIBLE);
-                previewView.setVisibility(View.VISIBLE);
-            });
-
-            captureButton.setVisibility(View.INVISIBLE);
-            cardView.setVisibility(View.INVISIBLE);
-
-            cameraProviderFuture = ProcessCameraProvider.getInstance(this);
-            cameraProviderFuture.addListener(() -> {
-                try {
-                    ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-                    bindPreview(cameraProvider);
-                } catch (ExecutionException | InterruptedException e){
-                    // this is error handling
-                }
-            }, ContextCompat.getMainExecutor(this));
+        // Request camera permissions
+        if (hasCameraPermission()) {
+            enableCamera();
         } else {
             requestPermission();
         }
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.R)
-    void bindPreview(ProcessCameraProvider cameraProvider) {
+    private boolean hasCameraPermission() {
+        return ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestPermission() {
+        ActivityCompat.requestPermissions(
+                this,
+                CAMERA_PERMISSION,
+                CAMERA_REQUEST_CODE
+        );
+    }
+
+    private void enableCamera() {
+        cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+        cameraProviderFuture.addListener(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+                    bindPreview(cameraProvider);
+                } catch (ExecutionException | InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }, ContextCompat.getMainExecutor(this));
+
+        LocalModel localModel =
+                new LocalModel.Builder()
+                        .setAssetFilePath("object_detection.tflite")
+                        .build();
+
+        // Live detection and tracking
+        CustomObjectDetectorOptions customObjectDetectorOptions =
+                new CustomObjectDetectorOptions.Builder(localModel)
+                        .setDetectorMode(CustomObjectDetectorOptions.STREAM_MODE)
+                        .enableClassification()
+                        .setClassificationConfidenceThreshold(0.5f)
+                        .setMaxPerObjectLabelCount(3)
+                        .build();
+
+        objectDetector = ObjectDetection.getClient(customObjectDetectorOptions);
+    }
+
+    private void bindPreview(ProcessCameraProvider cameraProvider) {
         Preview preview = new Preview.Builder().build();
+
+        preview.setSurfaceProvider(previewView.getSurfaceProvider());
+
         CameraSelector cameraSelector = new CameraSelector.Builder()
                 .requireLensFacing(CameraSelector.LENS_FACING_BACK)
                 .build();
-        preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-        final ImageCapture imageCapture = new ImageCapture.Builder()
-                .setTargetRotation(this.getWindowManager().getDefaultDisplay().getRotation())
+        ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
+                .setTargetResolution(new Size(1280, 720))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build();
 
-        Camera camera = cameraProvider.bindToLifecycle((LifecycleOwner)this,cameraSelector, preview, imageCapture);
+        imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(this), new ImageAnalysis.Analyzer() {
+            @Override
+            public void analyze(@NonNull ImageProxy imageProxy) {
+                int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();
+                @SuppressLint("UnsafeOptInUsageError") Image image = imageProxy.getImage();
+                if (image != null) {
+                    InputImage processImage = InputImage.fromMediaImage(image, rotationDegrees);
 
-        previewView.setOnClickListener(v -> {
-            imageCapture.takePicture(executor, new ImageCapture.OnImageCapturedCallback () {
-                @Override
-                public void onCaptureSuccess(ImageProxy image) {
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            image.close();
-                            Bitmap bitmap = changeBitmapContrastBrightness(previewView.getBitmap(), 1, 25);
-                            imgViewer.setImageBitmap(bitmap);
+                    objectDetector
+                            .process(processImage)
+                            .addOnFailureListener(e -> {
+                                Log.v("MainActivity", "Error - " + e.getMessage());
+                            })
+                            .addOnSuccessListener(results -> {
+                                for(DetectedObject i: results) {
+                                    if(i.getLabels().size() > 0) {
+                                        if(binding.parentLayout.getChildCount() > 1) binding.parentLayout.removeViewAt(1);
 
-                            previewView.setVisibility(View.INVISIBLE);
-                            cardView.setVisibility(View.VISIBLE);
-                            captureButton.setVisibility(View.VISIBLE);
-                        }
-                    });
-                    super.onCaptureSuccess(image);
+                                        Draw element = new Draw(MainActivity.this,
+                                                i.getBoundingBox(),
+                                                i.getLabels().get(0).getText());
+
+                                        System.out.println(i.getLabels().get(0).getText());
+
+                                        binding.parentLayout.addView(element);
+                                    }
+                                }
+                                imageProxy.close();
+                            });
                 }
-                @Override
-                public void onError(ImageCaptureException error) {
-                    error.printStackTrace();
-                }
-            });
-        });
-    }
-
-    Bitmap changeBitmapContrastBrightness(Bitmap bmp, float contrast, float brightness)
-    {
-        ColorMatrix cm = new ColorMatrix(new float[]
-                {
-                        contrast, 0, 0, 0, brightness,
-                        0, contrast, 0, 0, brightness,
-                        0, 0, contrast, 0, brightness,
-                        0, 0, 0, 1, 0
-                });
-
-        Bitmap ret = Bitmap.createBitmap(bmp.getWidth(), bmp.getHeight(), bmp.getConfig());
-
-        Canvas canvas = new Canvas(ret);
-
-        Paint paint = new Paint();
-        paint.setColorFilter(new ColorMatrixColorFilter(cm));
-        canvas.drawBitmap(bmp, 0, 0, paint);
-
-        return ret;
-    }
-
-    boolean hasAllPermission() {
-        for(String permission : REQUIRED_PERMISSIONS){
-            if(ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED){
-                return false;
             }
-        }
-        return true;
-    }
+        });
 
-    void requestPermission() {
-        ActivityCompat.requestPermissions(
-                this,
-                REQUIRED_PERMISSIONS,
-                REQUEST_CODE_PERMISSIONS
-        );
+        cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis, preview);
     }
 }

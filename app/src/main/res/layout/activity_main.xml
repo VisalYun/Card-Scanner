@@ -1,47 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
     tools:context=".MainActivity">
 
-    <LinearLayout
-        android:id="@+id/container"
+    <RelativeLayout
+        android:id="@+id/parentLayout"
         android:layout_width="match_parent"
-        android:layout_height="249dp"
-        android:orientation="vertical"
-        android:padding="10dp"
-        app:layout_constraintBottom_toTopOf="parent"
-        app:layout_constraintTop_toBottomOf="parent">
+        android:layout_height="match_parent">
 
         <androidx.camera.view.PreviewView
-            android:id="@+id/viewFinder"
+            android:id="@+id/previewView"
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
-    </LinearLayout>
+            android:layout_height="266dp" />
 
-    <Button
-        android:id="@+id/captureBtn"
-        android:layout_width="151dp"
-        android:layout_height="67dp"
-        android:layout_centerHorizontal="true"
-        android:layout_marginTop="300dp"
-        android:text="Cancel" />
+    </RelativeLayout>
 
-    <androidx.cardview.widget.CardView
-        android:id="@+id/cardView"
-        android:layout_width="match_parent"
-        android:layout_height="249dp"
-        android:layout_margin="10dp"
-        app:cardCornerRadius="8dp">
-
-        <ImageView
-            android:id="@+id/imgViewer"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:scaleType="centerCrop"/>
-    </androidx.cardview.widget.CardView>
-
-</RelativeLayout>
+</layout>
